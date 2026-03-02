@@ -2,6 +2,7 @@
 
 <h2>Table of contents</h2>
 
+- [What is `Git` in `VS Code`](#what-is-git-in-vs-code)
 - [Clone the repository](#clone-the-repository)
   - [Clone the repo using the `VS Code Terminal`](#clone-the-repo-using-the-vs-code-terminal)
   - [Clone the repo using the `Command Palette`](#clone-the-repo-using-the-command-palette)
