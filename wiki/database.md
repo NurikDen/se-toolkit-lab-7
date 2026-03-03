@@ -8,6 +8,7 @@
 - [`pgAdmin`](#pgadmin)
 - [`SQL`](#sql)
 - [Database schema](#database-schema)
+- [Database row](#database-row)
 - [ERD](#erd)
   - [ERD notations](#erd-notations)
     - [ERD in Chen notation](#erd-in-chen-notation)
@@ -54,6 +55,10 @@ You can [inspect columns](./pgadmin.md#browse-columns-in-the-table) of a table i
 > [!NOTE]
 > The column names in the database must match the field names in the [`Python`](./python.md#what-is-python) code.
 > If they don't match, the application will fail to read data from the database.
+
+## Database row
+
+<!-- TODO -->
 
 ## ERD
 
