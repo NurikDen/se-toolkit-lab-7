@@ -15,6 +15,7 @@
   - [Create a VM using the subscription](#create-a-vm-using-the-subscription)
 - [Go to the VM page](#go-to-the-vm-page)
 - [Get the IP address of the VM](#get-the-ip-address-of-the-vm)
+- [Set up a new VM](#set-up-a-new-vm)
 - [Delete the VM](#delete-the-vm)
 - [Troubleshooting](#troubleshooting)
   - [VM takes too long to start](#vm-takes-too-long-to-start)
@@ -152,6 +153,12 @@ Complete these steps:
    See [`<your-vm-ip-address>`](#your-vm-ip-address-placeholder).
 
    Example: `StudentsCourses01` - `192.0.2.1`
+
+## Set up a new VM
+
+1. [Create a VM](#create-a-vm).
+2. [Set up the `SSH` access to the VM for the user `admin`](./vm-access.md#set-up-the-ssh-access-to-the-vm).
+3. [Harden the VM for the user `admin`](./vm-hardening.md#harden-the-vm).
 
 ## Delete the VM
 
