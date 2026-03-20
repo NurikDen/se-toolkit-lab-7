@@ -7,11 +7,6 @@ testability. They can be called directly in test mode without Telegram.
 
 from .commands import (
     COMMAND_HANDLERS,
-    LLM_API_BASE_URL,
-    LLM_API_KEY,
-    LLM_API_MODEL,
-    LMS_API_KEY,
-    LMS_API_URL,
     handle_help,
     handle_health,
     handle_labs,
@@ -22,11 +17,6 @@ from .commands import (
 
 __all__ = [
     "COMMAND_HANDLERS",
-    "LLM_API_BASE_URL",
-    "LLM_API_KEY",
-    "LLM_API_MODEL",
-    "LMS_API_KEY",
-    "LMS_API_URL",
     "handle_help",
     "handle_health",
     "handle_labs",
