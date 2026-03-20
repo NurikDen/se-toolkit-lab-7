@@ -41,52 +41,65 @@ class LmsClient:
         if self._client and not self._client.is_closed:
             await self._client.aclose()
 
-    async def get_student_scores(self, telegram_id: int) -> dict:
+    async def get_items(self) -> list:
         """
-        Fetch scores for a student by Telegram ID.
-
-        Args:
-            telegram_id: The student's Telegram user ID
+        Fetch all items (labs and tasks) from the LMS.
 
         Returns:
-            Dictionary with score data
+            List of items (labs and tasks)
         """
         client = await self._get_client()
         try:
-            response = await client.get(f"/api/scores/{telegram_id}")
+            response = await client.get("/items/")
             response.raise_for_status()
             return response.json()
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError(f"HTTP {e.response.status_code} {e.response.reason_phrase}. The backend service may be down.")
+        except httpx.ConnectError as e:
+            raise RuntimeError(f"connection refused ({self.base_url}). Check that the services are running.")
         except httpx.HTTPError as e:
-            return {"error": str(e), "scores": []}
+            raise RuntimeError(f"{str(e)}. Check that the backend is running.")
 
-    async def get_lab_submissions(self, telegram_id: int) -> list:
+    async def get_pass_rates(self, lab: str) -> list:
         """
-        Fetch lab submissions for a student by Telegram ID.
+        Fetch pass rates for a specific lab.
 
         Args:
-            telegram_id: The student's Telegram user ID
+            lab: The lab identifier (e.g., "lab-04")
 
         Returns:
-            List of lab submission data
+            List of pass rate data for tasks in the lab
         """
         client = await self._get_client()
         try:
-            response = await client.get(f"/api/labs/{telegram_id}")
+            response = await client.get(f"/analytics/pass-rates?lab={lab}")
             response.raise_for_status()
             return response.json()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 422:
+                raise RuntimeError(f"invalid lab identifier: {lab}. Use format like 'lab-04'.")
+            raise RuntimeError(f"HTTP {e.response.status_code} {e.response.reason_phrase}. The backend service may be down.")
+        except httpx.ConnectError as e:
+            raise RuntimeError(f"connection refused ({self.base_url}). Check that the services are running.")
         except httpx.HTTPError as e:
-            return []
+            raise RuntimeError(f"{str(e)}. Check that the backend is running.")
 
-    async def health_check(self) -> bool:
+    async def health_check(self) -> dict:
         """
-        Check if the LMS API is healthy.
+        Check if the LMS API is healthy and get item count.
 
         Returns:
-            True if healthy, False otherwise
+            Dictionary with health status and item count
         """
         client = await self._get_client()
         try:
-            response = await client.get("/health")
-            return response.status_code == 200
-        except httpx.HTTPError:
-            return False
+            response = await client.get("/items/")
+            response.raise_for_status()
+            items = response.json()
+            return {"healthy": True, "item_count": len(items)}
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError(f"HTTP {e.response.status_code} {e.response.reason_phrase}. The backend service may be down.")
+        except httpx.ConnectError as e:
+            raise RuntimeError(f"connection refused ({self.base_url}). Check that the services are running.")
+        except httpx.HTTPError as e:
+            raise RuntimeError(f"{str(e)}. Check that the backend is running.")
