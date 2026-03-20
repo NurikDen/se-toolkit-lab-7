@@ -1,0 +1,15 @@
+[Unit]
+Description=SE Toolkit Lab 7 Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/se-toolkit-lab-7/bot
+Environment="PATH=/root/se-toolkit-lab-7/bot/.venv/bin"
+ExecStart=/root/se-toolkit-lab-7/bot/.venv/bin/python bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
