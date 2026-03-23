@@ -14,6 +14,7 @@ from .commands import (
     handle_start,
     route_command,
 )
+from .intent_router import route_intent
 
 __all__ = [
     "COMMAND_HANDLERS",
@@ -23,4 +24,5 @@ __all__ = [
     "handle_scores",
     "handle_start",
     "route_command",
+    "route_intent",
 ]

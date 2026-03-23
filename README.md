@@ -91,3 +91,73 @@ By the end of this lab, you should be able to say:
 2. [Backend Integration](./lab/tasks/required/task-2.md) — P0: slash commands + real data
 3. [Intent-Based Natural Language Routing](./lab/tasks/required/task-3.md) — P1: LLM tool use
 4. [Containerize and Document](./lab/tasks/required/task-4.md) — P3: containerize + deploy
+
+## Deploy
+
+### Prerequisites
+
+Ensure you have:
+- Docker and Docker Compose installed on your VM
+- `.env.docker.secret` configured with bot credentials (BOT_TOKEN, LLM_API_KEY, etc.)
+- Backend services running (`backend`, `postgres`, `caddy`)
+
+### Deploy the bot
+
+```bash
+# Navigate to project root
+cd ~/se-toolkit-lab-7
+
+# Stop any running bot process (from nohup development)
+pkill -f "bot.py" 2>/dev/null || true
+
+# Build and start all services including the bot
+docker compose --env-file .env.docker.secret up --build -d
+
+# Verify all services are running
+docker compose --env-file .env.docker.secret ps
+```
+
+You should see the `bot` service running alongside `backend`, `postgres`, `caddy`, and `pgadmin`.
+
+### Verify deployment
+
+```bash
+# Check bot container logs
+docker compose --env-file .env.docker.secret logs bot --tail 30
+
+# Look for: "Application started" and "getUpdates" messages
+```
+
+### Test in Telegram
+
+Send these messages to your bot in Telegram:
+
+1. `/start` — Welcome message
+2. `/help` — List of available commands
+3. `/health` — Backend health status
+4. "what labs are available?" — Natural language query
+5. "which lab has the lowest pass rate?" — Multi-step reasoning
+6. "sync the data" — Trigger data sync
+
+### Troubleshooting
+
+| Symptom | Solution |
+|---------|----------|
+| Bot container keeps restarting | Check logs: `docker compose logs bot`. Usually missing env var or import error. |
+| `/health` fails | Ensure `LMS_API_URL=http://backend:8000` (not localhost). Inside Docker, use service names. |
+| LLM queries fail | Ensure `LLM_API_BASE_URL=http://host.docker.internal:42005/v1`. The Qwen proxy is on a different network. |
+| "BOT_TOKEN is required" | Add `BOT_TOKEN` to `.env.docker.secret` |
+| Build fails at `uv sync --frozen` | Ensure `uv.lock` is copied in Dockerfile |
+
+### Stop and restart
+
+```bash
+# Stop all services
+docker compose --env-file .env.docker.secret down
+
+# Restart bot only
+docker compose --env-file .env.docker.secret restart bot
+
+# Rebuild and restart (after code changes)
+docker compose --env-file .env.docker.secret up --build -d bot
+```

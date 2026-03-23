@@ -13,6 +13,7 @@ import sys
 
 from config import load_config
 from handlers import route_command
+from handlers.intent_router import route_intent
 
 # Load configuration from .env.bot.secret
 load_config()
@@ -27,7 +28,7 @@ def parse_args() -> argparse.Namespace:
         "--test",
         type=str,
         metavar="COMMAND",
-        help="Test mode: run a command directly (e.g., --test '/start')"
+        help="Test mode: run a command directly (e.g., --test '/start' or --test 'what labs are available')"
     )
     return parser.parse_args()
 
@@ -35,23 +36,28 @@ def parse_args() -> argparse.Namespace:
 async def run_test_mode(command: str) -> int:
     """
     Run bot in test mode - call handler directly without Telegram.
-    
+
     Args:
-        command: The command to test (e.g., "/start", "/help")
-        
+        command: The command or message to test
+
     Returns:
         Exit code (0 for success, 1 for error)
     """
     try:
-        # Strip leading slash if present
-        cmd = command.lstrip("/")
-        
-        # Route command to handler
-        response = await route_command(cmd)
-        
+        # Check if it's a slash command
+        if command.startswith("/"):
+            # Strip leading slash if present
+            cmd = command.lstrip("/")
+
+            # Route command to handler
+            response = await route_command(cmd)
+        else:
+            # Natural language message - use intent router
+            response = await route_intent(command, debug=True)
+
         # Print response to stdout
         print(response)
-        
+
         return 0
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -63,6 +69,7 @@ async def run_production_mode() -> None:
     try:
         from aiogram import Bot, Dispatcher, types
         from aiogram.filters import Command
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     except ImportError:
         print(
             "Error: aiogram not installed. Run 'uv sync' in the bot directory.",
@@ -79,33 +86,77 @@ async def run_production_mode() -> None:
     # Initialize bot and dispatcher
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
-    
+
+    # Helper to create inline keyboard
+    def get_main_keyboard() -> InlineKeyboardMarkup:
+        """Create inline keyboard with common actions."""
+        keyboard = [
+            [
+                InlineKeyboardButton(text="📋 Labs", callback_data="labs"),
+                InlineKeyboardButton(text="📊 Scores", callback_data="scores"),
+            ],
+            [
+                InlineKeyboardButton(text="💚 Health", callback_data="health"),
+                InlineKeyboardButton(text="❓ Help", callback_data="help"),
+            ],
+        ]
+        return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
     # Register command handlers
     @dp.message(Command("start"))
     async def cmd_start(message: types.Message):
         response = await route_command("start", message.from_user.id)
-        await message.answer(response)
-    
+        await message.answer(response, reply_markup=get_main_keyboard())
+
     @dp.message(Command("help"))
     async def cmd_help(message: types.Message):
         response = await route_command("help", message.from_user.id)
         await message.answer(response)
-    
+
     @dp.message(Command("health"))
     async def cmd_health(message: types.Message):
         response = await route_command("health", message.from_user.id)
         await message.answer(response)
-    
+
     @dp.message(Command("scores"))
     async def cmd_scores(message: types.Message):
         response = await route_command("scores", message.from_user.id)
         await message.answer(response)
-    
+
     @dp.message(Command("labs"))
     async def cmd_labs(message: types.Message):
         response = await route_command("labs", message.from_user.id)
         await message.answer(response)
-    
+
+    # Callback query handler for inline buttons
+    @dp.callback_query()
+    async def handle_callback(callback: types.CallbackQuery):
+        await callback.answer()  # Acknowledge the callback
+
+        action = callback.data
+        if action == "labs":
+            response = await route_command("labs", callback.from_user.id)
+            await callback.message.answer(response)
+        elif action == "scores":
+            response = await route_command("scores", callback.from_user.id)
+            await callback.message.answer(response)
+        elif action == "health":
+            response = await route_command("health", callback.from_user.id)
+            await callback.message.answer(response)
+        elif action == "help":
+            response = await route_command("help", callback.from_user.id)
+            await callback.message.answer(response)
+
+    # Handle plain text messages with intent router
+    @dp.message()
+    async def handle_message(message: types.Message):
+        if not message.text:
+            return
+
+        user_text = message.text.strip()
+        response = await route_intent(user_text, user_id=message.from_user.id, debug=False)
+        await message.answer(response)
+
     # Start polling
     print("Bot is starting...")
     await dp.start_polling(bot)
@@ -114,7 +165,7 @@ async def run_production_mode() -> None:
 def main() -> int:
     """Main entry point."""
     args = parse_args()
-    
+
     if args.test:
         # Test mode: run command directly
         return asyncio.run(run_test_mode(args.test))
