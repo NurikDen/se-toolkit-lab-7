@@ -35,6 +35,8 @@ This is what a customer might tell you. Your job is to turn it into a working pr
 
 ## Requirements
 
+
+
 ### P0 — Must have
 
 1. Testable handler architecture — handlers work without Telegram
