@@ -40,6 +40,7 @@ class LlmClient:
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
                 headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
+                timeout=120.0,  # 2 minute timeout for LLM responses
             )
         return self._client
 
@@ -52,7 +53,7 @@ class LlmClient:
         self,
         messages: list[dict],
         tools: Optional[list[dict]] = None,
-        tool_choice: str = "auto",
+        tool_choice: Optional[str] = "auto",
     ) -> dict:
         """
         Send messages to the LLM and get a response.
@@ -60,7 +61,7 @@ class LlmClient:
         Args:
             messages: List of message dicts with 'role' and 'content'
             tools: Optional list of tool definitions for function calling
-            tool_choice: How to use tools ("auto", "required", or "none")
+            tool_choice: How to use tools ("auto", "required", or "none"). Only used if tools is provided.
 
         Returns:
             Dict with 'content' (text response) and/or 'tool_calls' (list of tool calls)
@@ -74,7 +75,8 @@ class LlmClient:
 
         if tools:
             payload["tools"] = tools
-            payload["tool_choice"] = tool_choice
+            if tool_choice:
+                payload["tool_choice"] = tool_choice
 
         try:
             response = await client.post("/chat/completions", json=payload)
@@ -94,12 +96,14 @@ class LlmClient:
             return result
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
-                raise RuntimeError("LLM API authentication failed (401). Token may have expired.")
-            raise RuntimeError(f"LLM API error: HTTP {e.response.status_code} {e.response.reason_phrase}")
+                raise RuntimeError(f"LLM API authentication failed (401). Token may have expired. Response: {e.response.text[:200]}")
+            raise RuntimeError(f"LLM API error: HTTP {e.response.status_code} {e.response.reason_phrase}. Response: {e.response.text[:200]}")
         except httpx.ConnectError as e:
             raise RuntimeError(f"LLM connection refused ({self.base_url}). Check that the LLM service is running.")
         except httpx.HTTPError as e:
-            raise RuntimeError(f"LLM API error: {str(e)}")
+            raise RuntimeError(f"LLM API HTTP error: {type(e).__name__}: {str(e)}")
+        except Exception as e:
+            raise RuntimeError(f"LLM API unexpected error: {type(e).__name__}: {str(e)}")
 
     async def chat_with_tools(
         self,
@@ -138,8 +142,15 @@ class LlmClient:
             if debug:
                 print(f"[loop] Iteration {iteration + 1}/{max_iterations}", file=sys.stderr)
 
-            # Call LLM
-            result = await self.chat(messages, tools=tools, tool_choice="auto")
+            # Only send tools on the first iteration - the proxy rejects tools on subsequent calls
+            # after tool results are returned
+            include_tools = tools if iteration == 0 else None
+            try:
+                result = await self.chat(messages, tools=include_tools, tool_choice="auto" if include_tools else None)
+            except Exception as e:
+                if debug:
+                    print(f"[chat error] Iteration {iteration + 1}: {type(e).__name__}: {e}", file=sys.stderr)
+                raise
 
             # Check if LLM returned tool calls
             tool_calls = result.get("tool_calls", [])
@@ -184,7 +195,16 @@ class LlmClient:
                         print(f"[tool] Error: {e}", file=sys.stderr)
 
             # Feed tool results back to LLM
-            messages.append({"role": "assistant", "content": result.get("content", ""), "tool_calls": tool_calls})
+            # Construct assistant message with tool_calls for proper OpenAI-compatible format
+            assistant_message = {
+                "role": "assistant",
+                "content": result.get("content", ""),
+            }
+            # Include tool_calls in the assistant message if present
+            if tool_calls:
+                assistant_message["tool_calls"] = tool_calls
+            
+            messages.append(assistant_message)
             messages.extend(tool_results)
 
             if debug:
@@ -202,7 +222,7 @@ class LlmClient:
             arguments: Tool arguments as dict
 
         Returns:
-            Tool execution result
+            Tool execution result or error message for the LLM
         """
         from services.lms_client import LmsClient
 
@@ -211,7 +231,17 @@ class LlmClient:
             # Get the method by name
             method = getattr(client, name, None)
             if not method:
-                raise ValueError(f"Unknown tool: {name}")
+                return {"error": f"Unknown tool: {name}. Available tools: get_items, get_learners, get_scores, get_pass_rates, get_timeline, get_groups, get_top_learners, get_completion_rate, trigger_sync"}
+
+            # Check for required 'lab' parameter
+            tools_requiring_lab = ["get_scores", "get_pass_rates", "get_timeline", "get_groups", "get_top_learners", "get_completion_rate"]
+            if name in tools_requiring_lab:
+                if not arguments or "lab" not in arguments:
+                    return {"error": f"Missing required 'lab' parameter. You must provide a lab ID like 'lab-01', 'lab-02', etc. Call get_items first to get valid lab IDs, then call {name}(lab='lab-XX') with the specific lab ID."}
+                # Validate lab ID format
+                lab_id = arguments.get("lab", "")
+                if not lab_id.startswith("lab-"):
+                    return {"error": f"Invalid lab ID format: '{lab_id}'. Lab IDs must be in format 'lab-01', 'lab-02', etc. Call get_items first to get valid lab IDs."}
 
             # Call the method with arguments
             if arguments:
@@ -220,6 +250,14 @@ class LlmClient:
                 result = await method()
 
             return result
+        except TypeError as e:
+            # Handle missing/incorrect arguments
+            error_msg = str(e)
+            if "missing" in error_msg and "required" in error_msg:
+                return {"error": f"Missing required argument: {error_msg}. For lab-specific tools, you must provide lab='lab-01', 'lab-02', etc. Call get_items first to get valid lab IDs."}
+            return {"error": f"Invalid arguments: {error_msg}"}
+        except Exception as e:
+            return {"error": f"Tool execution error: {str(e)}"}
         finally:
             await client.close()
 
@@ -252,7 +290,7 @@ def get_tool_definitions() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "get_items",
-                "description": "Get list of all labs and tasks available in the system",
+                "description": "Get list of all labs and tasks available in the system. Use this first to get lab IDs before calling other tools. No parameters required.",
                 "parameters": {
                     "type": "object",
                     "properties": {},
@@ -263,7 +301,7 @@ def get_tool_definitions() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "get_learners",
-                "description": "Get list of all enrolled learners/students",
+                "description": "Get list of all enrolled learners/students. No parameters required.",
                 "parameters": {
                     "type": "object",
                     "properties": {},
@@ -274,13 +312,13 @@ def get_tool_definitions() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "get_scores",
-                "description": "Get score distribution (4 buckets) for a specific lab",
+                "description": "Get score distribution (4 buckets) for a specific lab. You MUST provide a lab ID from get_items results.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "lab": {
                             "type": "string",
-                            "description": "Lab identifier in format 'lab-01', 'lab-02', etc.",
+                            "description": "REQUIRED. Lab identifier like 'lab-01', 'lab-02', 'lab-03', etc. Get valid IDs from get_items first.",
                         },
                     },
                     "required": ["lab"],
@@ -291,13 +329,13 @@ def get_tool_definitions() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "get_pass_rates",
-                "description": "Get per-task average scores and attempt counts for a specific lab",
+                "description": "Get per-task average scores and attempt counts for a specific lab. You MUST provide a lab ID from get_items results.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "lab": {
                             "type": "string",
-                            "description": "Lab identifier in format 'lab-01', 'lab-02', etc.",
+                            "description": "REQUIRED. Lab identifier like 'lab-01', 'lab-02', 'lab-03', etc. Get valid IDs from get_items first.",
                         },
                     },
                     "required": ["lab"],
@@ -308,13 +346,13 @@ def get_tool_definitions() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "get_timeline",
-                "description": "Get submission timeline (submissions per day) for a specific lab",
+                "description": "Get submission timeline (submissions per day) for a specific lab. You MUST provide a lab ID from get_items results.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "lab": {
                             "type": "string",
-                            "description": "Lab identifier in format 'lab-01', 'lab-02', etc.",
+                            "description": "REQUIRED. Lab identifier like 'lab-01', 'lab-02', 'lab-03', etc. Get valid IDs from get_items first.",
                         },
                     },
                     "required": ["lab"],
@@ -325,13 +363,13 @@ def get_tool_definitions() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "get_groups",
-                "description": "Get per-group performance scores and student counts for a specific lab",
+                "description": "Get per-group performance scores and student counts for a specific lab. You MUST provide a lab ID from get_items results.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "lab": {
                             "type": "string",
-                            "description": "Lab identifier in format 'lab-01', 'lab-02', etc.",
+                            "description": "REQUIRED. Lab identifier like 'lab-01', 'lab-02', 'lab-03', etc. Get valid IDs from get_items first.",
                         },
                     },
                     "required": ["lab"],
@@ -342,13 +380,13 @@ def get_tool_definitions() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "get_top_learners",
-                "description": "Get top N learners by score for a specific lab",
+                "description": "Get top N learners by score for a specific lab. You MUST provide a lab ID from get_items results.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "lab": {
                             "type": "string",
-                            "description": "Lab identifier in format 'lab-01', 'lab-02', etc.",
+                            "description": "REQUIRED. Lab identifier like 'lab-01', 'lab-02', 'lab-03', etc. Get valid IDs from get_items first.",
                         },
                         "limit": {
                             "type": "integer",
@@ -364,13 +402,13 @@ def get_tool_definitions() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "get_completion_rate",
-                "description": "Get completion rate percentage for a specific lab",
+                "description": "Get completion rate percentage for a specific lab. You MUST provide a lab ID from get_items results.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "lab": {
                             "type": "string",
-                            "description": "Lab identifier in format 'lab-01', 'lab-02', etc.",
+                            "description": "REQUIRED. Lab identifier like 'lab-01', 'lab-02', 'lab-03', etc. Get valid IDs from get_items first.",
                         },
                     },
                     "required": ["lab"],
@@ -381,7 +419,7 @@ def get_tool_definitions() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "trigger_sync",
-                "description": "Trigger ETL sync to refresh data from the autochecker system",
+                "description": "Trigger ETL sync to refresh data from the autochecker system. Use this when user asks to 'sync', 'refresh', 'update', or 'reload' data. No parameters required.",
                 "parameters": {
                     "type": "object",
                     "properties": {},
@@ -401,21 +439,32 @@ def get_system_prompt() -> str:
     return """You are an AI assistant for a Learning Management System (LMS). Your job is to help users get information about labs, scores, pass rates, and student performance.
 
 You have access to the following tools:
-- get_items: List all labs and tasks
-- get_learners: List all enrolled students
-- get_scores: Get score distribution for a lab
-- get_pass_rates: Get per-task pass rates for a lab
-- get_timeline: Get submission timeline for a lab
-- get_groups: Get per-group performance for a lab
-- get_top_learners: Get top N learners for a lab
-- get_completion_rate: Get completion rate for a lab
-- trigger_sync: Refresh data from autochecker
+- get_items: List all labs and tasks (no parameters needed)
+- get_learners: List all enrolled students (no parameters needed)
+- get_scores: Get score distribution for a specific lab (requires lab parameter)
+- get_pass_rates: Get per-task pass rates for a specific lab (requires lab parameter)
+- get_timeline: Get submission timeline for a specific lab (requires lab parameter)
+- get_groups: Get per-group performance for a specific lab (requires lab parameter)
+- get_top_learners: Get top N learners for a specific lab (requires lab parameter)
+- get_completion_rate: Get completion rate for a specific lab (requires lab parameter)
+- trigger_sync: Refresh data from autochecker (no parameters needed) - use for "sync", "refresh", "update", "reload" queries
 
-When a user asks a question:
-1. Use tools to gather the necessary data - ALWAYS call tools before answering
-2. For questions comparing labs, call the tool for each lab and compare
-3. For questions about "which lab has the lowest/highest", first get all labs with get_items, then get pass_rates for each
-4. Format your response clearly with the data you found
-5. If the user's message is a greeting or doesn't need data, respond naturally without tools
+CRITICAL RULES:
+1. ALWAYS call tools before answering - never guess or make up data
+2. For tools requiring a "lab" parameter, you MUST provide a valid lab ID like "lab-01", "lab-02", etc.
+3. To get lab IDs, first call get_items, then extract the lab identifiers from the results
+4. For "which lab has the lowest/highest" questions: call get_items first, then call get_pass_rates for EACH lab with its specific lab ID
+5. For sync/refresh/update queries: call trigger_sync immediately
+6. Always include specific numbers in your response (percentages, counts, lab names)
+7. Format your answer clearly with the actual data you retrieved
+
+Example workflow for "which lab has the lowest pass rate?":
+1. Call get_items() → get list of labs
+2. For each lab ID (e.g., "lab-01", "lab-02"), call get_pass_rates(lab="lab-01")
+3. Compare the results and report the lab with lowest average, including the percentage
+
+Example workflow for "sync the data":
+1. Call trigger_sync()
+2. Report success with details from the response
 
 Be concise but informative. Always include relevant numbers from the data."""

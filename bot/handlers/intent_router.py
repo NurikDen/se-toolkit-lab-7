@@ -18,6 +18,13 @@ def is_greeting(message: str) -> bool:
     return message.lower().strip() in greetings
 
 
+def is_sync_request(message: str) -> bool:
+    """Check if message is requesting a data sync."""
+    sync_keywords = ["sync", "refresh", "update", "reload", "load data", "fetch data"]
+    message_lower = message.lower().strip()
+    return any(keyword in message_lower for keyword in sync_keywords)
+
+
 def get_greeting_response(message: str) -> str:
     """Return a friendly greeting response with capabilities hint."""
     return (
@@ -31,7 +38,8 @@ def get_greeting_response(message: str) -> str:
         "• 'What labs are available?'\n"
         "• 'Show me scores for lab 4'\n"
         "• 'Which lab has the lowest pass rate?'\n"
-        "• 'Who are the top 5 students in lab 3?'"
+        "• 'Who are the top 5 students in lab 3?'\n"
+        "• 'Sync the data' - refresh data from autochecker"
     )
 
 
@@ -58,6 +66,11 @@ async def route_intent(message: str, user_id: Optional[int] = None, debug: bool 
     # Handle greetings without calling LLM (simple pattern, not routing)
     if is_greeting(message):
         return get_greeting_response(message)
+
+    # Handle sync requests explicitly to ensure trigger_sync is called
+    if is_sync_request(message):
+        # Pre-process sync requests to ensure the LLM calls trigger_sync
+        message = f"[SYNC REQUEST] {message}. Please call trigger_sync to sync/refresh the data from autochecker."
 
     # Get tool definitions and system prompt
     tools = get_tool_definitions()
