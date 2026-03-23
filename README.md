@@ -97,6 +97,8 @@ By the end of this lab, you should be able to say:
 3. [Intent-Based Natural Language Routing](./lab/tasks/required/task-3.md) — P1: LLM tool use
 4. [Containerize and Document](./lab/tasks/required/task-4.md) — P3: containerize + deploy
 
+
+
 ## Deploy
 
 ### Prerequisites
